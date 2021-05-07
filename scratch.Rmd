@@ -65,25 +65,18 @@ colnames(colors)[1] <- "parent_carrier"
 colnames(colors)[2] <- "color"
 
 parent_carrier <- c("DL","AA","AS","B6","UA","DL","UA","F9","WN","HA","AA","NK","AA","OO","UA","AA","VX","WN","UA","YV")
-
-local = "MSP"
 ```
 
 ```{r}
+local = "MSP"
+
 flights_fromlocal <- tbl(con_air,"flights") %>% 
   filter(origin == local) %>% 
   mutate(date = substr(time_hour,1,10)) %>%
-  select(date,year,month,day,hour,carrier,dest,dep_delay) %>% 
+  select(date,year,month,day,hour,carrier,dest,dep_delay,distance) %>% 
   ungroup() %>% 
   collect()
-```
 
-```{r}
-flights_fromlocal %>% 
-  pryr::object_size()
-```
-
-```{r}
 carriers <- tbl(con_air,"flights") %>% 
   group_by(carrier) %>% 
   summarise() %>% 
@@ -115,19 +108,24 @@ airports_no_flights <- tbl(con_air,"airports") %>%
   na.omit()
 ```
 
+
 ```{r}
 flights_fromlocal %>% 
   #head(15000) %>% 
   left_join(carriers) %>% 
   group_by(parent_carrier) %>% 
-  summarise(delay = mean(dep_delay)) %>% 
+  summarise(delay = mean(dep_delay),
+            n = n()) %>% 
   left_join(airline_names) %>% 
   ggplot(
     aes(
       x = fct_reorder(name,delay),
       y = delay,
       fill = parent_carrier,
-      color = parent_carrier
+      color = parent_carrier,
+      text = paste("Carrier: ", name,"\n",
+                   "Number of flights: ", n, "\n",
+                   "Average Delay: ~",round(delay)," minutes","\n", sep = "")
     )
   )+
   geom_col()+
@@ -137,27 +135,67 @@ flights_fromlocal %>%
   theme_minimal()+
   labs(
     x = "",
-    y = "Average Delay (Minutes)"
+    y = paste("Average Delay (Minutes) at",local)
   )+
   theme(legend.position = "none") -> p0
 
-p0 %>% ggplotly()
+p0 %>% ggplotly(tooltip = c("text"))
 ```
 
+```{r}
+flights_fromlocal %>% 
+  #head(15000) %>% 
+  left_join(carriers) %>% 
+  group_by(year) %>% 
+  summarise(delay = mean(dep_delay),
+            n = n()) %>% 
+  #left_join(airline_names) %>% 
+  ggplot(
+    aes(
+      x = year,
+      y = delay,
+      #fill = parent_carrier,
+      #color = parent_carrier,
+      group = 1,
+      text = paste("Year: ", year, "\n",
+                   "Number of flights: ", n, "\n",
+                   "Average Delay: ~",round(delay)," minutes","\n", sep = "")
+    )
+  )+
+  geom_line(size = 0.7)+
+  geom_point()+
+  #scale_fill_manual(values = cols)+
+  #scale_color_manual(values = cols)+
+  #facet_wrap(~name)+
+  theme_minimal()+
+  labs(
+    x = "Year",
+    y = "Average Delay (Minutes)"
+  )+
+  theme(legend.position = "none") -> p1a
+
+p1a %>% ggplotly(tooltip = c("text"))
+```
 
 ```{r}
 flights_fromlocal %>% 
   #head(15000) %>% 
   left_join(carriers) %>% 
   group_by(year,parent_carrier) %>% 
-  summarise(delay = mean(dep_delay)) %>% 
+  summarise(delay = mean(dep_delay),
+            n = n()) %>% 
   left_join(airline_names) %>% 
   ggplot(
     aes(
       x = year,
       y = delay,
       fill = parent_carrier,
-      color = parent_carrier
+      color = parent_carrier,
+      group = 1,
+      text = paste("Carrier: ", name,"\n",
+                   "Year: ", year, "\n",
+                   "Number of flights: ", n, "\n",
+                   "Average Delay: ~",round(delay)," minutes","\n", sep = "")
     )
   )+
   geom_line(size = 0.7)+
@@ -172,21 +210,62 @@ flights_fromlocal %>%
   )+
   theme(legend.position = "none") -> p1
 
-p1 %>% ggplotly()
+p1 %>% ggplotly(tooltip = c("text"))
+```
+
+```{r}
+flights_fromlocal %>% 
+  #head(15000) %>% 
+  left_join(carriers) %>% 
+  group_by(month) %>% 
+  summarise(delay = mean(dep_delay),
+            n = n()) %>% 
+  #left_join(airline_names) %>% 
+  ggplot(
+    aes(
+      x = month,
+      y = delay,
+      #fill = parent_carrier,
+      #color = parent_carrier,
+      group = 1,
+      text = paste("Month: ", month, "\n",
+                   "Number of flights: ", n, "\n",
+                   "Average Delay: ~",round(delay)," minutes","\n", sep = "")
+    )
+  )+
+  geom_line(size = 0.7)+
+  geom_point()+
+  #scale_fill_manual(values = cols)+
+  #scale_color_manual(values = cols)+
+  #facet_wrap(~name)+
+  theme_minimal()+
+  labs(
+    x = "Year",
+    y = "Average Delay (Minutes)"
+  )+
+  theme(legend.position = "none") -> p2a
+
+p2a %>% ggplotly(tooltip = c("text"))
 ```
 
 ```{r}
 flights_fromlocal %>% 
   left_join(carriers) %>% 
   group_by(month,parent_carrier) %>% 
-  summarise(delay = mean(dep_delay)) %>% 
+  summarise(delay = mean(dep_delay),
+            n=n()) %>% 
   left_join(airline_names) %>% 
   ggplot(
     aes(
       x = month,
       y = delay,
       fill = parent_carrier,
-      color = parent_carrier
+      color = parent_carrier,
+      group = 1,
+      text = paste("Carrier: ", name,"\n",
+                   "Month: ", month, "\n",
+                   "Number of flights: ", n, "\n",
+                   "Average Delay: ~",round(delay)," minutes","\n", sep = "")
     )
   )+
   geom_line(size = 0.7)+
@@ -201,7 +280,7 @@ flights_fromlocal %>%
   )+
   theme(legend.position = "none") -> p2
 
-p2 %>% ggplotly()
+p2 %>% ggplotly(tooltip = c("text"))
 ```
 
 ```{r}
@@ -210,14 +289,20 @@ flights_fromlocal %>%
          wday = wday(time_day)) %>% 
   left_join(carriers) %>%
   group_by(wday,parent_carrier) %>% 
-  summarise(delay = mean(dep_delay)) %>% 
+  summarise(delay = mean(dep_delay),
+            n=n()) %>% 
   left_join(airline_names) %>% 
   ggplot(
     aes(
       x = wday,
       y = delay,
       fill = parent_carrier,
-      color = parent_carrier
+      color = parent_carrier,
+      group = 1,
+      text = paste("Carrier: ", name,"\n",
+                   "Day of the Week: ", wday, "\n",
+                   "Number of flights: ", n, "\n",
+                   "Average Delay: ~",round(delay)," minutes","\n", sep = "")
     )
   )+
   geom_line(size = 0.7)+
@@ -227,26 +312,32 @@ flights_fromlocal %>%
   facet_wrap(~name)+
   theme_minimal()+
   labs(
-    x = "Day of the Week",
+    x = "Day of the Week (1 is Sunday)",
     y = "Average Delay (Minutes)"
   )+
   theme(legend.position = "none") -> p3
 
-p3 %>% ggplotly()
+p3 %>% ggplotly(tooltip = c("text"))
 ```
 
 ```{r}
 flights_fromlocal %>% 
   left_join(carriers) %>%
   group_by(hour,parent_carrier) %>% 
-  summarise(delay = mean(dep_delay)) %>% 
+  summarise(delay = mean(dep_delay),
+            n = n()) %>% 
   left_join(airline_names) %>% 
   ggplot(
     aes(
       x = hour,
       y = delay,
       fill = parent_carrier,
-      color = parent_carrier
+      color = parent_carrier,
+      group = 1,
+      text = paste("Carrier: ", name,"\n",
+                   "Hour of the Day: ", hour, "\n",
+                   "Number of flights: ", n, "\n",
+                   "Average Delay: ~",round(delay)," minutes","\n", sep = "")
     )
   )+
   geom_line(size = 0.7)+
@@ -261,7 +352,7 @@ flights_fromlocal %>%
   )+
   theme(legend.position = "none") -> p4
 
-p4 %>% ggplotly()
+p4 %>% ggplotly(tooltip = c("text"))
 ```
 
 ```{r}
@@ -269,11 +360,7 @@ flights_fromlocal %>%
   group_by(dest) %>% 
   summarise(delay = mean(dep_delay)) %>% 
   left_join(routes_fromlocal) -> d2
-  
-d2
-```
 
-```{r}
 geo <- list(
       #scope = "usa",
       projection = list(
@@ -325,4 +412,3 @@ ggplotly(p) %>%
         paper_bgcolor='transparent'
       )
 ```
-

@@ -1,0 +1,1422 @@
+---
+title: "Final Project for STAT 494-01: Advanced Data Science w/ R"
+author: "Robert Duc Bui"
+date: "5/6/2021"
+output: html_document
+---
+
+```{css, echo=FALSE}
+pre {
+  max-height: 700px;
+  overflow-y: auto;
+}
+
+pre[class] {
+  max-height: 100px;
+}
+```
+
+<br><br>
+
+<div class="mycontent">
+
+# Introduction
+
+------------------------------------------------------------------------
+
+Getting from point A to point B is only half the battle when it comes to forms of transportation - how long it takes to do so is also a significant part of the travel equation. When judged by the pure speed at which vehicles can travel, aviation is the undisputed champion when it comes to time savings, but in reality, the flying experience can be a lot more time-consuming than just time spent in the air: getting to the airport, checking in, waiting at a security checkpoint, waiting for boarding, taxiing, takeoff and landing, baggage claim, etc. can take up a significant part of time spent getting from A to B in an airplane, and a majority of the stress in doing so.
+
+And that is not to mention the dreaded delay: at any point, a flight that is supposed to leave on time could be delayed by anywhere between several minutes to several days, significantly impacting the travel experience in the process. A carefully orchestrated plan to get from A to B in order to transfer to C could be rendered impossible by an unexpected delay, whether due to weather conditions, congested taxiways and runways, security contingencies, or simply due to human error somewhere in the massive supply chain that keeps hundred-thousand-pounds of machinery in the air safely.
+
+This dreaded delay is the main focus of this project, and will be tackled in three main parts: exploratory analysis on the potential factors in flight departure delays, followed by the implementation of common machine learning algorithms in predicting the delay of a certain flight given known parameters, and potentials in further exploration on this topic using data science techniques. The scope of this analysis will be defined as flights departing from Minneapolis-St. Paul International Airport from 2010 to 2017 - but data from other airports in the US will be available for experimentation in the attached Shiny app.
+
+Even with limitations on scale, computing expenses, and available data, this project aims to benefit a multitude of stakeholders in the aviation industry on both the firm and customer side, as a deeper understanding and potential ability to predict and ameliorate unwanted delays in operation can benefit all parties involved in the aviation experience.
+
+# Setting up the R environment
+
+------------------------------------------------------------------------
+
+<details>
+
+<summary>
+
+This section briefly goes over the technical aspects of setting up the R environment necessary for data exploration and machine learning implementation. The content here is chiefly for fellow R learners and enthusiasts. If you're more interested in the data, feel free to skip this section. Otherwise click here.
+
+</summary>
+
+## Basic Packages
+
+For the graphs in this demonstration, I will be using the *tidyverse* suite of packages for RStudio as the main toolset for data wrangling, cleaning, and visualisation through *ggplot2*, and implementation of interactive plots through *plotly*. I will also be using *lubridate* for datetime manipulation, *stringr* for string manipulation, *dbplyr*, *RMySQL* and *RSQLite* for SQL querying from a database in order to speed up basic data manipulation. For aesthetic customisation of the document, I use *patchwork* and *extrafont*.
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+library(tidyverse)   # RStudio's suite of extended tools.
+library(magrittr)
+library(lubridate)   # For datetime manipulation
+library(extrafont)   # For custom fonts.
+library(patchwork)   # For plot tiling.
+library(kableExtra)  # For tables
+library(plotly)      # For interactivity
+library(Cairo)       # For plot render anti-aliasing
+```
+
+For the machine learning algorithms in part 2, I will be using the tidy R programming syntax of the *tidymodels* package, which acts as a universal wrapper for multiple ML packages. I will be using a combination of the *tidymodels*-included *yardstick* package and the *DALEX* and *DALEXtra* package family to assess the performance of the models. Depending on the specific ML model that *tidymodels* calls, RStudio will need specific packages, which I will note in the associated code section.
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+library(tidymodels)  # For ML workflows.
+library(tensorflow)  # For GPU acceleration with keras [NOT STABLE - DEPENDENT ON SYMLINK, WILL REBUILD]
+library(ranger)      # For rf training
+library(glmnet)      # For LASSO training
+library(keras)       # For MLP training
+library(DALEX)       # For model estimation and performance assessment.
+library(DALEXtra)    # For model estimation and performance assessment.
+```
+
+## Database Setup
+
+This project will be tapping into the *airlines* SQL database hosted by the authors of [Modern Data Science with R](https://mdsr-book.github.io/). In this section I will use *dbplyr* syntax to initialise and configure the R-to-SQL connection.
+
+```{r class.output="scroll-100", message=FALSE, warning=FALSE}
+library(dbplyr)
+library(RMySQL)
+library(RSQLite)
+
+# Creating a database connection object to be used in dbplyr queries
+con_air <- dbConnect(RMySQL::MySQL(),
+                     dbname = "airlines",
+                     host = "mdsr.cdc7tgkkqd0n.us-east-1.rds.amazonaws.com",
+                     user = "mdsr_public",
+                     password = "ImhsmflMDSwR")
+
+dbListTables(con_air)
+```
+
+## Colour palette
+
+I will also set a custom colour scale for use throughout different visualisations, for the sake of design continuity. The palettes are defined here, and displayed below. Each airline's colour is matched to elements of their logo and livery, or in cases where confusion could arise (as many airlines use shades of blue that are close to identical), a secondary or tertiary colour present on their livery or marketing material.
+
+Note that for data corresponding to local and minor airlines that purely service routes as a subsidiary or in partnership with a major airline, I will process such data as part of the major airline to cut down on computational costs and reduce confusion, as most of such flights operated under code-sharing would be advertised as, and assigned a code matching that of the parent carrier.
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+cols <- c("AA"="#0078d2",
+          "AS"="#9abd63",
+          "B6"="#7eb4f7",
+          "DL"="#ab1740",
+          "F9"="#006341",
+          "HA"="#cb0686",
+          "NK"="#f7e501",
+          "OO"="#6d8ba6",
+          "UA"="#00319b",
+          "VX"="#dc2424",
+          "WN"="#f29802",
+          "YV"="#251f21")
+
+airline_names <- c(
+  "AA" = "American (incl. Subsidiaries)",
+  "AS" = "Alaska",
+  "B6" = "JetBlue",
+  "DL" = "Delta (incl. Subsidiaries)",
+  "F9" = "Frontier",
+  "HA" = "Hawaii",
+  "NK" = "Spirit",
+  "OO" = "SkyWest",
+  "UA" = "United (incl. Subsidiaries)",
+  "VX" = "Virgin",
+  "WN" = "Southwest",
+  "YV" = "Mesa"
+) %>% 
+  as.data.frame() %>% 
+  rownames_to_column("parent_carrier")
+
+colnames(airline_names)[2] <- "name"
+
+colors <- as.data.frame(cols) %>% 
+  rownames_to_column()
+
+colnames(colors)[1] <- "parent_carrier"
+colnames(colors)[2] <- "color"
+
+parent_carrier <- c("DL","AA","AS","B6","UA","DL","UA","F9","WN","HA","AA","NK","AA","OO","UA","AA","VX","WN","UA","YV")
+```
+
+</detail>
+
+# Data Preparation
+
+------------------------------------------------------------------------
+
+This project will be tapping into the *airlines* SQL database hosted by the authors of [Modern Data Science with R](https://mdsr-book.github.io/). In this section I will use *dbplyr* syntax to initialise and configure the R-to-SQL connection.
+
+First, a `local` string object is created for the airport code. This object would be used in the SQL query to isolate flights that depart from specified local airport. While having the entire dataset available for visualisation would be ideal, having one airport allows for more localised and specific insights, while cutting down on the memory requirement of processing a large amount of data. Note that even after isolating for MSP (Minneapolis-St. Paul International Airport), the data query still takes around a minute to run, and returns nearly a million rows of 9 columns.
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+# Defining local airport for base analysis
+local = "MSP"
+```
+
+Now, using *dplyr*'s syntax, I perform as much of the data cleaning and wrangling before calling the `collect()` function from *dbplyr*, to offload some of the computational work to the SQL server. Because this project is severely limited in terms of available memory, especially when compared to the much more scalable and managed memory pool of an AWS server, this step allows us to speed up processing speed while preventing a catastrophic crash due to memory leak or overflow. 
+
+Not all of this could be done in one *dbplyr* pipeline, however. As base SQL does not have as robust a datetime manipulation feature set as *lubridate*, I can only offload as much transformation work before I have to export to a R dataframe that would allow compatibility with *lubridate*.
+
+An alternative method for SQL-importing here would have been to write SQL queries manually instead of relying on *dbplyr*'s tidy-to-SQL translation, but as the two methods are roughly equivalent for all intents and purposes, I opt for tidy formatting as it would be more readable to R audiences, and to streamline interactions with local RStudio environment objects.
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+# Filtering for only flights from defined local airport
+flights_fromlocal <- tbl(con_air,"flights") %>% 
+  filter(origin == local) %>% 
+  mutate(date = substr(time_hour,1,10)) %>%
+  select(date,year,month,day,hour,carrier,dest,dep_delay,distance) %>% 
+  ungroup() %>% 
+  collect()
+
+# SELECT-ing for carriers and merging with parent-carrier and custom colour scale data (see Setting up the R Environment above for more details)
+carriers <- tbl(con_air,"flights") %>% 
+  group_by(carrier) %>% 
+  summarise() %>% 
+  collect() %>% 
+  cbind(parent_carrier) %>% 
+  left_join(colors)
+
+# Separate data frame of destination airport latitude and longitude for flights that depart from local airport for spatial visualisation later on.
+routes_fromlocal <- tbl(con_air,"flights") %>% 
+  filter(origin == local) %>% 
+  group_by(dest) %>% 
+  summarise(n=n()) %>% 
+  collect()
+routes_fromlocal <- tbl(con_air,"airports") %>% 
+  select(dest=faa,lat,lon,city) %>% 
+  collect() %>% 
+  right_join(routes_fromlocal) %>% 
+  na.omit()
+
+# Data point of geographical location for local airport.
+local_geo <- tbl(con_air,"airports") %>% 
+  filter(faa == local) %>% 
+  select(lat,lon) %>% 
+  collect()
+
+# Separate data frame for airports that do not receive any flights from local airport.
+airports_no_flights <- tbl(con_air,"airports") %>% 
+  select(dest=faa,lat,lon,city) %>% 
+  collect() %>% 
+  anti_join(routes_fromlocal) %>% 
+  na.omit()
+```
+
+
+# Exploratory Analysis of Departure Delays
+
+------------------------------------------------------------------------
+
+Now that the data is retrieved from the SQL server, we can proceed to the exploratory analysis.
+
+## Carrier Effect
+
+Given the different price segments that carriers operate at, it would be reasonable to surmise that operations and ground services pattern would also vary across carriers. This difference could potentially affect whether a flight is delayed or not, and thus here we look at difference in departure delay between carriers. 
+
+> One quirk of the data set that must be noted is the fact that there are many negative values for departure delay, signifying that a flight is able to depart earlier than scheduled time. While this is good news for the passengers on such flights, negative values can potentially cause problems with scaling in plots while not contributing much to the usefulness of this analysis. Therefore, I have opted to standardise all negative `dep_delay` values to 0. In cases where extremely large values necessitate the use of a logarithmic scale, values equal to 0 or lower would be evaluated on a case-by-case basis, preferably by omitting them from that specific plot.
+
+First we start off by examining the proportion of flights that are either early or on-time compared to late flights, and the number of flights departing from MSP, by carrier. Unsurprisingly, Delta operates the most flights out of MSP, one of its national hubs. Most airlines hover around 70% flights on-time, with Southwest, Spirit, and Frontier trailing the rest.
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+options(scipen=999)
+
+flights_fromlocal %>% 
+  left_join(carriers) %>% 
+  mutate(is_late = ifelse(dep_delay > 0, T, F)) %>% 
+  group_by(parent_carrier,is_late) %>% 
+  summarise(n=n()) %>%
+  mutate(prop_on_time = round(n/sum(n),digits = 2)) %>% 
+  left_join(airline_names) %>% 
+  ggplot(
+    aes(
+      x = fct_reorder(name,n),
+      y = n,
+      alpha = ifelse(is_late != 1, 1, .85),
+      fill = parent_carrier,
+      color = parent_carrier
+    )
+  )+
+  geom_col()+
+  geom_text(aes(x = fct_reorder(name,n), 
+                y = -4000, 
+                label = format(round(prop_on_time, 2), nsmall = 2)),hjust = 1)+
+  coord_flip()+
+  scale_fill_manual(values = cols)+
+  scale_color_manual(values = cols)+
+  ylim(-12000, 600000)+
+  #scale_y_sqrt()+
+  theme_minimal()+
+  labs(
+    x = "",
+    y = paste("Filled portions indicate on-time flights, departing from",local)
+  )+
+  theme(legend.position = "none")
+```
+
+The next plot examines the distribution in the delay of all flights that are NOT on-time, with `dep_delay` higher than 0. Almost all of these distributions have extremely long tails, with rare occurrences of much longer delays than usual. 
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+flights_fromlocal %>% 
+  filter(dep_delay > 0) %>% 
+  left_join(carriers) %>% 
+  select(parent_carrier,dep_delay) %>% 
+  left_join(airline_names) %>% 
+  ggplot(
+    aes(
+      x = dep_delay,
+      y = name,
+      fill = parent_carrier,
+      colour = parent_carrier,
+      group = name,
+      height = ..density..
+    )
+  )+
+  ggridges::geom_density_ridges(stat = "binline", 
+                                trim = TRUE,
+                                binwidth = 30,
+                                panel_scaling = TRUE,
+                                draw_baseline = F,
+                                scale = .9)+
+  scale_fill_manual(values = cols)+
+  scale_color_manual(values = cols)+
+  theme_minimal()+
+  labs(
+    x = paste("Departure Delay Distribution by Minutes, departing from",local),
+    y = ""
+  )+
+  theme(legend.position = "none")
+```
+
+As this tail is very long but thin, with a quick stratification we can see that for extremely long wait times, only a very small proportion of flights have long wait times. The specific numbers for different strata are listed in the table below. 
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+flights_fromlocal %>% 
+  mutate(dep_delay = as.numeric(dep_delay)) %>% 
+  select(dep_delay) %>% 
+  mutate(Stratum = case_when(dep_delay <= 0 ~ "<0 or on-time",
+                             0 < dep_delay & dep_delay <= 120 ~  "0 to 2 hours",
+                             120 < dep_delay & dep_delay <= 360 ~ "2+ to 6 hours",
+                             360 < dep_delay & dep_delay <= 720 ~ "6+ to 12 hours",
+                             720 < dep_delay & dep_delay <= 1440 ~ "Half to full day",
+                             1440 < dep_delay ~ "More than 1 full day")) %>% 
+  group_by(Stratum) %>% 
+  summarise(`# of Flights`=n()) %>% 
+  mutate(Proportion = `# of Flights`/sum(`# of Flights`)) %>% 
+  kbl() %>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+Note that as only about ~1.5% of all flights ever end up getting delayed for more than 2 hours, this might produce extremities that affect the performance of a machine learning model implemented on untransformed data. We will address this further in part 2.
+
+This next plot examines the carrier effect on average delay time as a whole - including negative delays i.e. flights that depart early. Budget airlines fare worse here, with Spirit, Southwest, and Frontier scraping the bottom. Around the average and lower segment of delay times, with the exception of United, are major airlines like Delta, American, Alaska, and SkyWest (technically not a major airline, but operates as an affiliate for Alaska as Alaska SkyWest, American as American Eagle, Delta as Delta Connection, and United as United Express - so can roughly be considered as one in this context.)
+
+Note that from here on out, I will be removing all carriers that have fewer than 100 flights over an assessment period, as such a small sample size cannot provide statistically robust information.
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+flights_fromlocal %>% 
+  left_join(carriers) %>% 
+  group_by(parent_carrier) %>% 
+  summarise(delay = mean(dep_delay),
+            n = n()) %>% 
+  left_join(airline_names) %>% 
+  filter(n >= 100) %>% 
+  ggplot(
+    aes(
+      x = fct_reorder(name,delay),
+      y = delay,
+      fill = parent_carrier,
+      color = parent_carrier,
+      text = paste("Carrier: ", name,"\n",
+                   "Number of flights: ", n, "\n",
+                   "Average Delay: ~",round(delay,digits=2)," minutes","\n", sep = "")
+    )
+  )+
+  geom_col(size = .01)+
+  coord_flip()+
+  scale_fill_manual(values = cols)+
+  scale_color_manual(values = cols)+
+  theme_minimal()+
+  labs(
+    x = "",
+    y = paste("Average Delay by Minutes, departing from",local)
+  )+
+  theme(legend.position = "none") -> p
+
+p %>% ggplotly(tooltip = c("text"))
+
+```
+
+With the above graphs in mind, we can come to a conclusion that there is a moderate relationship between carrier and delay times: budget airlines generally have more delays, major airlines hover around the average (with Delta providing a pretty good demonstration of the law of large numbers, trending towards an average performance through a large number of samples). Whether this relationship is robust or not will be explored in the performance assessment of machine learning models in part 2.
+
+## Year-over-Year Effect
+
+Without any information, we can still surmise that there could be a relationship between a specific year and average delay times: different weather patterns, specific economic events that affect travel volume on the demand side and supply chain integrity on the supply side, world events that could lead to tightening or loosening security measures, etc. While not present in the data set, the year 2020 and 2021 would be prime examples of this: flight volumes plummeted during 2020 compared to all other years around it, and 2021 flight volume could start to recover and even increase relatively to pre-pandemic levels due to the pressure-valve-like release of suppressed, latent travel demand. 
+
+To establish a baseline before applying the above carrier effect, we now plot the average delay time by year. The year-over-year difference is negligible (~2 minute change, practically imperceptible compared to airtime), which could be due to the large proportion of flights that are on-time or early. Therefore we add an additional group for *only* flights that are delayed by at least 1 minute, for which the YoY change remains negligible, with the exception of 2016, after which delays are elevated by nearly 8 minutes compared to pre-2016 levels.
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+flights_fromlocal %>%
+  left_join(carriers) %>%
+  filter(dep_delay > 0) %>%
+  group_by(year) %>%
+  summarise(delay = mean(dep_delay),
+            n = n()) %>%
+  mutate(valtype = ifelse(T, "Delayed Only")) %>%
+  rbind(
+    flights_fromlocal %>%
+      left_join(carriers) %>%
+      group_by(year) %>%
+      summarise(delay = mean(dep_delay),
+                n = n()) %>%
+      mutate(valtype = ifelse(T, "All Flights"))
+  ) %>%
+  ggplot(aes(
+    x = year,
+    y = delay,
+    #fill = parent_carrier,
+    color = valtype,
+    group = 1,
+    text = paste(
+      "Year: ",year,"\n",
+      "Number of flights: ",n,"\n",
+      valtype, " Delay: ~",round(delay,digits = 1)," minutes","\n",
+      "Group: ",valtype,
+      sep = ""
+    )
+  )) +
+  geom_line(size = 0.7) +
+  geom_point() +
+  #scale_fill_manual(values = cols)+
+  #scale_color_manual(values = cols)+
+  #facet_wrap(~name)+
+  theme_minimal() +
+  labs(x = paste("Year-over-Year Average Delay by Minutes, departing from",local),
+       y = "") +
+  theme(legend.position = "none") -> p
+
+p %>% ggplotly(tooltip = c("text"))
+```
+
+Similarly, plotting the YoY change in the median value of departure delay gives us little in the way of insights. From here on out, similar baseline plots will have both mean and median combined on the same plot.
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+flights_fromlocal %>%
+  left_join(carriers) %>%
+  filter(dep_delay > 0) %>%
+  group_by(year) %>%
+  summarise(delay = median(dep_delay),
+            n = n()) %>%
+  mutate(valtype = ifelse(T, "Delayed Only")) %>%
+  rbind(
+    flights_fromlocal %>%
+      left_join(carriers) %>%
+      group_by(year) %>%
+      summarise(delay = median(dep_delay),
+                n = n()) %>%
+      mutate(valtype = ifelse(T, "All Flights"))
+  ) %>%
+  ggplot(aes(
+    x = year,
+    y = delay,
+    #fill = parent_carrier,
+    color = valtype,
+    group = 1,
+    text = paste(
+      "Year: ",year,"\n",
+      "Number of flights: ",n,"\n",
+      "Median Delay: ~",round(delay,digits = 1)," minutes","\n",
+      "Group: ",valtype,
+      sep = ""
+    )
+  )) +
+  geom_line(size = 0.7) +
+  geom_point() +
+  #scale_fill_manual(values = cols)+
+  #scale_color_manual(values = cols)+
+  #facet_wrap(~name)+
+  theme_minimal() +
+  labs(x = paste("Year-over-Year Median Delay by Minutes, departing from",local),
+       y = "") +
+  theme(legend.position = "none") -> p
+
+p %>% ggplotly(tooltip = c("text"))
+```
+
+Applying a `facet_wrap` for different carriers, the trends for most carriers with substantive volume out of MSP do not appear to showcase any robust temporal relationships, with the exception of Spirit. Somewhat encouragingly, Spirit's track record improved year-over-year from 2015 to 2017 by significant amounts.
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+flights_fromlocal %>% 
+  left_join(carriers) %>% 
+  group_by(year,parent_carrier) %>% 
+  summarise(delay = mean(dep_delay),
+            n = n()) %>% 
+  mutate(shapetype = ifelse(1,"Average")) %>% 
+  rbind(
+    flights_fromlocal %>%
+      left_join(carriers) %>%
+      group_by(year,parent_carrier) %>%
+      summarise(delay = median(dep_delay),
+                n = n()) %>%
+      mutate(shapetype = ifelse(T, "Median"))
+  ) %>% 
+  left_join(airline_names) %>% 
+  filter(n>=100) %>% 
+  left_join(airline_names) %>% 
+  ggplot(
+    aes(
+      x = year,
+      y = delay,
+      fill = parent_carrier,
+      color = parent_carrier,
+      shape = shapetype,
+      linetype = shapetype,
+      group = 1,
+      text = paste("Carrier: ", name,"\n",
+                   "Year: ", year, "\n",
+                   "Number of flights: ", n, "\n",
+                   shapetype, " Delay: ~",round(delay)," minutes","\n", sep = "")
+    )
+  )+
+  geom_line(size = 0.7)+
+  geom_point()+
+  scale_fill_manual(values = cols)+
+  scale_color_manual(values = cols)+
+  facet_wrap(~name)+
+  theme_minimal()+
+  labs(
+    x = paste("Year-over-Year Mean/Median Delay across Carriers by Minutes, departing from",local),
+    y = ""
+  )+
+  theme(legend.position = "none") -> p
+
+p %>% ggplotly(tooltip = c("text"))
+```
+
+## Month Effect
+
+Of the time effects, the differential between delays across months is probably the most intuitive even without any domain knowledge: certain months of the year with popular holidays would see increased travel volume, thereby increasing the likelihood of a delay occurring. Below we establish a baseline of mean and median delay by month of the year when taking the whole data frame, before delving into carrier effects. 
+
+As seen below, these assumptions pretty much hold true: both median and mean `dep_delay` are higher in peak travel months such as the June-July summer vacation season and the Christmas season. 
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+flights_fromlocal %>%
+  left_join(carriers) %>%
+  filter(dep_delay > 0) %>%
+  group_by(month) %>%
+  summarise(delay = median(dep_delay),
+            n = n()) %>% 
+  mutate(valtype = ifelse(T, "Delayed Only"),
+         shapetype = ifelse(T,"Median")) %>%
+  rbind(
+    flights_fromlocal %>%
+      left_join(carriers) %>%
+      group_by(month) %>%
+      summarise(delay = median(dep_delay),
+                n = n()) %>%
+      mutate(valtype = ifelse(T, "All Flights"),
+             shapetype = ifelse(T,"Median"))
+  ) %>%
+  rbind(
+    flights_fromlocal %>%
+      left_join(carriers) %>%
+      group_by(month) %>%
+      summarise(delay = mean(dep_delay),
+                n = n()) %>%
+      mutate(valtype = ifelse(T, "All Flights"),
+             shapetype = ifelse(T,"Average"))
+  ) %>%
+  rbind(
+    flights_fromlocal %>%
+      left_join(carriers) %>%
+      filter(dep_delay > 0) %>%
+      group_by(month) %>%
+      summarise(delay = mean(dep_delay),
+                n = n()) %>%
+      mutate(valtype = ifelse(T, "Delayed Only"),
+             shapetype = ifelse(T,"Average"))
+  ) %>%
+  ggplot(aes(
+    x = month,
+    y = delay,
+    #fill = parent_carrier,
+    color = valtype,
+    shape = shapetype,
+    linetype = shapetype,
+    group = 1,
+    text = paste(
+      "Month: ",month,"\n",
+      "Number of flights: ",n,"\n",
+      shapetype, " Delay: ~",round(delay,digits = 1)," minutes","\n",
+      "Group: ",valtype,
+      sep = ""
+    )
+  )) +
+  geom_line(size = 0.7) +
+  geom_point() +
+  scale_x_discrete(limits=c(1:12))+
+  #scale_fill_manual(values = cols)+
+  #scale_color_manual(values = cols)+
+  #facet_wrap(~name)+
+  theme_minimal() +
+  labs(x = paste("Monthly Median/Mean Delay by Minutes, departing from",local),
+       y = "") +
+  theme(legend.position = "none") -> p
+
+p %>% ggplotly(tooltip = c("text"))
+```
+
+When faceted by carriers, the same pattern roughly holds across carriers with substantial volume. Interestingly enough, Spirit stands out as the sole airline with a much larger increase in average delay times as it transitions from low volume to high volume. There could be two potential reasons behind this pattern: either this is an artifact of Spirit's lower overall flight volume compared to major airlines, or perhaps Spirit's operational model is less scalable than that of major airlines, whose processes might be more adapted to allow for operational consistency and continuity during periods of heavy load.
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+flights_fromlocal %>% 
+  left_join(carriers) %>% 
+  group_by(month,parent_carrier) %>% 
+  summarise(delay = mean(dep_delay),
+            n=n()) %>% 
+  mutate(shapetype = ifelse(1,"Average")) %>% 
+  rbind(
+    flights_fromlocal %>%
+      left_join(carriers) %>%
+      group_by(month,parent_carrier) %>%
+      summarise(delay = median(dep_delay),
+                n = n()) %>%
+      mutate(shapetype = ifelse(T, "Median"))
+  ) %>% 
+  left_join(airline_names) %>% 
+  filter(n>=100) %>% 
+  ggplot(
+    aes(
+      x = month,
+      y = delay,
+      fill = parent_carrier,
+      color = parent_carrier,
+      shape = shapetype,
+      linetype = shapetype,
+      group = 1,
+      text = paste("Carrier: ", name,"\n",
+                   "Month: ", month, "\n",
+                   "Number of flights: ", n, "\n",
+                   shapetype, " Delay: ~",round(delay)," minutes","\n", sep = "")
+    )
+  )+
+  geom_line(size = 0.7)+
+  geom_point()+
+  scale_fill_manual(values = cols)+
+  scale_color_manual(values = cols)+
+  scale_x_discrete(limits=c(1:12))+
+  facet_wrap(~name)+
+  theme_minimal()+
+  labs(
+    x = paste("Monthly Median/Mean Delay across Carriers by Minutes, departing from",local),
+    y = ""
+  )+
+  theme(legend.position = "none") -> p
+
+p %>% ggplotly(tooltip = c("text"))
+```
+
+## Day-of-the-Week Effect
+
+Using the same procedure as for the previous two potential time effects, here we can scarcely observe any pattern.
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+flights_fromlocal %>%
+  mutate(time_day = date(date),
+         wday = wday(time_day)) %>% 
+  left_join(carriers) %>%
+  filter(dep_delay > 0) %>%
+  group_by(wday) %>%
+  summarise(delay = median(dep_delay),
+            n = n()) %>% 
+  mutate(valtype = ifelse(T, "Delayed Only"),
+         shapetype = ifelse(T,"Median")) %>%
+  rbind(
+    flights_fromlocal %>%
+      mutate(time_day = date(date),
+             wday = wday(time_day)) %>% 
+      left_join(carriers) %>%
+      group_by(wday) %>%
+      summarise(delay = median(dep_delay),
+                n = n()) %>%
+      mutate(valtype = ifelse(T, "All Flights"),
+             shapetype = ifelse(T,"Median"))
+  ) %>%
+  rbind(
+    flights_fromlocal %>%
+      mutate(time_day = date(date),
+             wday = wday(time_day)) %>% 
+      left_join(carriers) %>%
+      group_by(wday) %>%
+      summarise(delay = mean(dep_delay),
+                n = n()) %>%
+      mutate(valtype = ifelse(T, "All Flights"),
+             shapetype = ifelse(T,"Average"))
+  ) %>%
+  rbind(
+    flights_fromlocal %>%
+      mutate(time_day = date(date),
+             wday = wday(time_day)) %>% 
+      left_join(carriers) %>%
+      filter(dep_delay > 0) %>%
+      group_by(wday) %>%
+      summarise(delay = mean(dep_delay),
+                n = n()) %>%
+      mutate(valtype = ifelse(T, "Delayed Only"),
+             shapetype = ifelse(T,"Average"))
+  )  %>%
+  ggplot(aes(
+    x = wday,
+    y = delay,
+    #fill = parent_carrier,
+    color = valtype,
+    shape = shapetype,
+    linetype = shapetype,
+    group = 1,
+    text = paste(
+      "Weekday: ",wday,"\n",
+      "Number of flights: ",n,"\n",
+      shapetype," Delay: ~",round(delay,digits = 1)," minutes","\n",
+      "Group: ",valtype,
+      sep = ""
+    )
+  )) +
+  geom_line(size = 0.7) +
+  geom_point() +
+  #scale_fill_manual(values = cols)+
+  #scale_color_manual(values = cols)+
+  #facet_wrap(~name)+
+  scale_x_discrete(limits=c(1:7))+
+  theme_minimal() +
+  labs(x = paste("Mean/Median Delay across days of the week by Minutes, departing from",local),
+       y = "") +
+  theme(legend.position = "none") -> p
+
+p %>% ggplotly(tooltip = c("text"))
+```
+
+Similarly, there is little to be gleaned from carrier-faceted data either. There seems not to be a very robust relationship, if any at all, between `wday` and `dep_delay`. We will refrain from creating this variable in training the machine learning models.
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+flights_fromlocal %>% 
+  mutate(time_day = date(date),
+         wday = wday(time_day)) %>% 
+  left_join(carriers) %>%
+  group_by(wday,parent_carrier) %>% 
+  summarise(delay = mean(dep_delay),
+            n=n()) %>% 
+  mutate(shapetype = ifelse(1,"Average")) %>% 
+  rbind(
+    flights_fromlocal %>%
+      mutate(time_day = date(date),
+             wday = wday(time_day)) %>% 
+      left_join(carriers) %>%
+      group_by(wday,parent_carrier) %>%
+      summarise(delay = median(dep_delay),
+                n = n()) %>%
+      mutate(shapetype = ifelse(T, "Median"))
+  ) %>% 
+  left_join(airline_names) %>% 
+  filter(n>=100) %>% 
+  ggplot(
+    aes(
+      x = wday,
+      y = delay,
+      fill = parent_carrier,
+      color = parent_carrier,
+      shape = shapetype,
+      linetype = shapetype,
+      group = 1,
+      text = paste("Carrier: ", name,"\n",
+                   "Day of the Week: ", wday, "\n",
+                   "Number of flights: ", n, "\n",
+                   shapetype," Delay: ~",round(delay)," minutes","\n", sep = "")
+    )
+  )+
+  geom_line(size = 0.7)+
+  geom_point()+
+  scale_fill_manual(values = cols)+
+  scale_color_manual(values = cols)+
+  scale_x_discrete(limits=c(1:7))+
+  facet_wrap(~name)+
+  theme_minimal()+
+  labs(
+    x = paste("Mean/Median Delay across days of the week by Minutes, departing from",local),
+    y = ""
+  )+
+  theme(legend.position = "none") -> p
+
+p %>% ggplotly(tooltip = c("text"))
+```
+
+## Hour Effect
+
+Grouping all flights in a certain hour and plotting departure delay shows that the later a flight is scheduled to leave in the day, the higher the expected delay amount. This pattern holds across airlines, albeit to different extents, and can potentially be included in machine learning models.
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+flights_fromlocal %>%
+  left_join(carriers) %>%
+  filter(dep_delay > 0) %>%
+  group_by(hour) %>%
+  summarise(delay = median(dep_delay),
+            n = n()) %>% 
+  mutate(valtype = ifelse(T, "Delayed Only"),
+         shapetype = ifelse(T,"Median")) %>%
+  rbind(
+    flights_fromlocal %>%
+      left_join(carriers) %>%
+      group_by(hour) %>%
+      summarise(delay = median(dep_delay),
+                n = n()) %>%
+      mutate(valtype = ifelse(T, "All Flights"),
+             shapetype = ifelse(T,"Median"))
+  ) %>%
+  rbind(
+    flights_fromlocal %>%
+      left_join(carriers) %>%
+      group_by(hour) %>%
+      summarise(delay = mean(dep_delay),
+                n = n()) %>%
+      mutate(valtype = ifelse(T, "All Flights"),
+             shapetype = ifelse(T,"Average"))
+  ) %>%
+  rbind(
+    flights_fromlocal %>%
+      left_join(carriers) %>%
+      filter(dep_delay > 0) %>%
+      group_by(hour) %>%
+      summarise(delay = mean(dep_delay),
+                n = n()) %>%
+      mutate(valtype = ifelse(T, "Delayed Only"),
+             shapetype = ifelse(T,"Average"))
+  )  %>%
+  filter(n>100) %>% 
+  ggplot(aes(
+    x = hour,
+    y = delay,
+    #fill = parent_carrier,
+    color = valtype,
+    shape = shapetype,
+    linetype = shapetype,
+    group = 1,
+    text = paste(
+      "Hour: ",hour,"\n",
+      "Number of flights: ",n,"\n",
+      shapetype," Delay: ~",round(delay,digits = 1)," minutes","\n",
+      "Group: ",valtype,
+      sep = ""
+    )
+  )) +
+  geom_line(size = 0.7) +
+  geom_point() +
+  #scale_fill_manual(values = cols)+
+  #scale_color_manual(values = cols)+
+  #facet_wrap(~name)+
+  scale_x_discrete(limits=c(0:23))+
+  theme_minimal() +
+  labs(x = paste("Mean/Median Delay across hours, departing from",local),
+       y = "") +
+  theme(legend.position = "none") -> p
+
+p %>% ggplotly(tooltip = c("text"))
+```
+
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+flights_fromlocal %>% 
+  left_join(carriers) %>% 
+  group_by(hour,parent_carrier) %>% 
+  summarise(delay = mean(dep_delay),
+            n=n()) %>% 
+  mutate(shapetype = ifelse(1,"Average")) %>% 
+  rbind(
+    flights_fromlocal %>%
+      left_join(carriers) %>%
+      group_by(hour,parent_carrier) %>%
+      summarise(delay = median(dep_delay),
+                n = n()) %>%
+      mutate(shapetype = ifelse(T, "Median"))
+  ) %>% 
+  left_join(airline_names) %>% 
+  filter(n>=100) %>% 
+  ggplot(
+    aes(
+      x = hour,
+      y = delay,
+      fill = parent_carrier,
+      color = parent_carrier,
+      shape = shapetype,
+      linetype = shapetype,
+      group = 1,
+      text = paste("Carrier: ", name,"\n",
+                   "Hour: ", hour, "\n",
+                   "Number of flights: ", n, "\n",
+                   shapetype, " Delay: ~",round(delay)," minutes","\n", sep = "")
+    )
+  )+
+  geom_line(size = 0.7)+
+  geom_point()+
+  scale_fill_manual(values = cols)+
+  scale_color_manual(values = cols)+
+  scale_x_discrete(limits=seq(0, 24, 2))+
+  facet_wrap(~name)+
+  theme_minimal()+
+  labs(
+    x = paste("Mean/Median Delay across hours, departing from", local),
+    y = ""
+  )+
+  theme(legend.position = "none") -> p
+
+p %>% ggplotly(tooltip = c("text"))
+```
+
+## Destinations
+
+To see the various destinations of flights departing from MSP and the average delay for each destination airport, here we construct a plotly interactive map directly with `plotly`'s syntax instead of a `ggplotly`-based approach. In the below map and its interactive counterpart in the Shiny app, the star denotes departure airport, green circles denote destination airports, and the size of said circles are the average delay. The average annual volume of flights is also encoded in the hover tooltip.
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+flights_fromlocal %>% 
+  group_by(dest) %>% 
+  summarise(delay = mean(dep_delay)) %>% 
+  left_join(routes_fromlocal) -> d2
+
+geo <- list(
+      #scope = "usa",
+      projection = list(
+      type = 'orthographic',
+      rotation = list(lon = local_geo$lon, lat = local_geo$lat, roll = 0)
+      ),
+      showland = T,
+      landcolor = 'transparent',
+      countrycolor = 'transparent'
+    )
+    
+p <- plot_geo() %>% 
+      add_markers(
+        data = airports_no_flights, x = ~lon, y = ~lat, 
+        size = .1, 
+        opacity=.16,
+        hoverinfo = "none",
+        symbol = I("x-thin"),
+      ) %>%
+      add_segments(
+        data = d2, 
+        x = local_geo$lon, xend = ~lon,
+        y = local_geo$lat, yend = ~lat,
+        alpha=.175,size = ~sqrt(n),
+        opacity = .5
+      ) %>% 
+      add_markers(
+        data = d2, x = ~lon, y = ~lat, 
+        text = ~paste("Destination Airport:   ", dest, "\n","City:                          ",city,"\n","Average Delay:         ",round(delay)," minutes","\n","Annual # Flights:      ",n/8,sep=""), 
+        hoverinfo = "text",
+        size = ~delay^2
+      ) %>% 
+      add_markers(
+        data = d2, x = local_geo$lon, y = local_geo$lat, 
+        text = paste(local), 
+        hoverinfo = "text",
+        size = I(10),
+        symbol = I("star"),
+        color = I("red")
+      )
+
+ggplotly(p) %>% 
+      layout(
+        title = 'Delay by Destination Airport',
+        geo = geo, showlegend = F,
+        plot_bgcolor='transparent',
+        paper_bgcolor='transparent'
+      )
+```
+
+Given MSP's status as a major airport, its service network is extensive - which in turn causes this plot to be fairly information-dense. The following graph plot air distance to a destination against average delay to more clearly examine the potential relationship between the two. 
+
+This scatterplot does not appear to follow a very robust relationship, and demonstrates a high amount of heteroskedasticity. Yet it does not appear to be entirely trivial, and perhaps ML algorithms can still make use of this variable in calculating an expected delay value.
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+d2 %>%
+  mutate(dist_km = geosphere::distHaversine(cbind(lon, lat),
+                                            cbind(local_geo$lon, local_geo$lat)) /
+           1000) %>%
+  ggplot(aes(x    = dist_km,
+             y    = delay,
+             text = paste("Airport: ",dest,
+                          "\nCity: ",city,
+                          "\nDistance :",round(dist_km,digits=2),
+                          "\nAvg. Delay: ",round(delay,digits=2),
+                          sep = ""))) +
+  geom_jitter()+
+  labs(
+    x = "Distance (km)",
+    y = "Average Delay"
+  )+
+  theme_minimal() -> p1
+
+p1 %>% ggplotly(tooltip = c("text"))
+```
+
+## EXTRA 1: Shiny App for All Airports Data Exploration
+
+This section includes an embedded link to a Shiny app that allows all of the above plots to be produced for any airport in the US, accessible via the 3-letter IATA airport code. Note that as data is retrieved from a remote SQL server, performance is highly dependent on connection speed, data size, server load, etc. - as such, airports with massive flight volume such as ATL or LAX might take significantly longer to import.
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+knitr::include_app("https://robert-mdh-bui.shinyapps.io/flights_exploratory_analysis/",
+                   height = "600px")
+```
+
+> In case the embedded application does not load, here is a [Direct Link](https://robert-mdh-bui.shinyapps.io/flights_exploratory_analysis/).
+
+# Machine Learning to Predict Delays
+
+------------------------------------------------------------------------
+
+## Resetting the environment
+
+To start building the ML pipeline with `tidymodels`, first we have to clear the global environment to free up memory that could be better used for training at this stage. Then, using the same process of setting up the database earlier, we retrieve data from the server through `RMySQL` and `dbplyr` syntax.
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+rm(list = ls())
+
+con_air <- dbConnect(RMySQL::MySQL(),
+                     dbname = "airlines",
+                     host = "mdsr.cdc7tgkkqd0n.us-east-1.rds.amazonaws.com",
+                     user = "mdsr_public",
+                     password = "ImhsmflMDSwR")
+
+local = "MSP"
+parent_carrier <- c("DL","AA","AS","B6","UA","DL","UA","F9","WN","HA","AA","NK","AA","OO","UA","AA","VX","WN","UA","YV")
+
+# Re-acquiring data for training & testing
+alldata_local <- tbl(con_air,"flights") %>% 
+  filter(origin == local,
+         cancelled == 0,
+         diverted == 0) %>% 
+  select(time=sched_dep_time,carrier,dest,distance,date=time_hour,dep_delay) %>% 
+  collect()
+
+# Acquiring carrier data
+carriers <- tbl(con_air,"flights") %>% 
+  group_by(carrier) %>% 
+  summarise() %>% 
+  collect() %>% 
+  cbind(parent_carrier)
+
+# Replacing minor contract airlines with parent carrier tag and merging to form final raw data set
+alldata_local <- alldata_local %>% 
+  left_join(carriers) %>% 
+  mutate(date = lubridate::date(date),
+         carrier = parent_carrier) %>% 
+  select(-c(parent_carrier))
+```
+
+As a step of caution to ensure that the training process does not consume too much system resources and overflow onto system pagefiles (which would slow performance down even further), we check the size of the data object with the `object_size()` function from the `pryr` package.
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+alldata_local %>% 
+  pryr::object_size()
+```
+
+```{r echo=FALSE}
+load(file = "trained_workflows/MSP/ranger_fit_log.RData")
+load(file = "trained_workflows/MSP/lasso_fit_log.RData")
+load(file = "trained_workflows/MSP/mlp.nnet_fit_log.RData")
+```
+
+
+## Pre-recipe transformation
+
+Before we begin constructing `tidymodel` pipelines, recall that the distribution of departure delay values has an extremely long and thin tail - indicating the presence of extreme outliers, which might cause model performance to be negatively affected, or incorrectly assessed. In order to get around this, we perform a logarithmic scaling on departure delay values, which would allow for greater flexibility in dealing with extremities. A corollary of this however, is that flights that are on-time or early would not have a log value (since `log(0)` is undefined and `log(k)`for `k < 0` is not a real number) - which means we would have to force those values to 0 (equivalent to `log(1)`, or the same value as a flight that leaves 1 minute after scheduled). For all intents and purposes, whether a flight leaves 5 minutes early or 1 minute late should not matter for a traveller, so I would consider this loss of data integrity an acceptable trade-off.
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+logdata_local <- alldata_local %>% 
+  mutate(log_delay = case_when(dep_delay <= 1 ~ 0,
+                                   dep_delay > 1 ~ dep_delay %>% log())) %>% 
+  filter(is.double(log_delay) == T) %>% 
+  select(-dep_delay)
+
+```
+
+We will not be keeping the year of a flight in the model, as this would introduce difficulties in adjusting for predicting present and future flights: integrating a time-series prediction algorithm to account for future trends is outside of the scopes of this project. 
+
+Additionally, this raises a significant concern with using this model on present and future data, as predicting aviation patterns post-COVID would also require both domain knowledge and statistical techniques far beyond the scope of this project. We will proceed with building models nonetheless, holding the assumption that any outcome model would be more indicative of component factors contributing to departure delays, rather than actually being useful in the purpose of predicting the future especially in its current stage of relative non-complexity. 
+
+Thus, we extract the month and date data from the `date` column and discard the year - and for the sake of convenience, rearrange the columns. The date column would still be kept however, in order to match them to US holidays.
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+logdata_local <- logdata_local %>% 
+  mutate(
+    month = month(date),
+    day = day(date)
+  ) %>% 
+  select(month,day,date,time,carrier,dest,distance,log_delay)
+```
+
+## Splitting the data
+
+As per standard procedure, the data is split into a training set and a testing set for validation. Here we use `tidymodel` syntax to create a split key, and subset the data into their respective frames.
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+# Setting seed for reproducibility 
+set.seed(8675309) # Talk about an earworm.
+
+splitkey <- initial_split(logdata_local, prop = .75)
+
+flight_training_log <- splitkey %>% training()
+flight_testing_log  <- splitkey %>% testing()
+```
+
+Finally, before we start building the model, for the purpose of benchmarking later on, we establish a baseline performance of a naive model that 'predicts' `log_delay` by assigning every row the average of all `log_delay`s. The metric chosen here would be RMSE, as this is a regression question as opposed to classification.
+
+
+```{r class.output="scroll-100", echo=TRUE, fig.align="center", fig.height=6, message=FALSE, warning=FALSE}
+rmse_naive <- flight_training_log %>% 
+  mutate(naive_avg = mean(log_delay)) %>% 
+  summarise(training_naive_log_rmse = sqrt(mean((log_delay - naive_avg) ^ 2)))
+
+rmse_set <- rmse_naive
+rmse_set
+```
+
+
+## Building the model
+
+### Recipe
+
+Now we can start building the recipe. To cut down on time and processing complexity, we will be using one recipe of universal tranformations that need to be performed, such as creating dummy variables to encode whether a flight was on a US public holiday or not and for day and month variables, creating dummy variables for factor columns, removing redundancies, centering-and-scaling numeric values, etc.
+
+```{r class.output="scroll-100", echo=T, fig.align="center", fig.height=6, message=F, warning=F, eval=F}
+recipe_log <- recipe(log_delay ~ .,
+         data = flight_training_log) %>% 
+  step_holiday(date, holidays = timeDate::listHolidays("US")) %>% 
+  step_rm(date) %>% 
+  step_mutate(time = (time %/% 100) + (time %% 100 / 60),
+              month = month %>% as.factor(),
+              day = day %>% as.factor()) %>% 
+  step_dummy(c(day,month,carrier,dest)) %>%
+  step_scale(c(time,distance)) %>% 
+  step_center(c(time,distance)) %>% 
+  step_zv(all_predictors())
+```
+
+### Model Specifications
+
+Now we construct the specifications for three different models. While there are many different approaches to a regression problem, here we will limit our scope to just Random Forests, LASSO Regression, and Multi-Layer Perceptrons. The first two represent more intermediate versions of basic algorithms (Decision Trees and Linear Regression), while MLP represents the most basic foray into deep learning techniques. Once again, as we are time-constrained, cross-validation and regularisation will only be performed at the most basic levels where absolutely necessary.
+
+```{r class.output="scroll-100", echo=T, fig.align="center", fig.height=6, message=F, warning=F, eval=F}
+# Random Forest w/ `ranger` package
+ranger_spec_log <- 
+  rand_forest(mtry = 5,
+              min_n = 50,
+              trees = 100) %>% 
+  set_mode("regression") %>% 
+  set_engine("ranger")
+
+ranger_wf_log <-
+  workflow() %>% 
+  add_recipe(recipe_log) %>% 
+  add_model(ranger_spec_log)
+
+# LASSO regression w/ `glmnet` package
+lasso_spec_log <-
+  linear_reg(mixture = 1) %>%
+  set_engine("glmnet") %>%
+  set_args(penalty = tune()) %>%
+  set_mode("regression")
+
+lasso_wf_log <-
+  workflow() %>%
+  add_recipe(recipe_log) %>%
+  add_model(lasso_spec_log)
+
+set.seed(8675309)
+lasso_cv_log <-
+  vfold_cv(flight_training_log, v = 3)
+
+penalty_grid <-
+  grid_regular(penalty(),
+               levels = 4)
+
+lasso_tune_log <-
+  lasso_wf_log %>%
+  tune_grid(resamples = lasso_cv_log,
+            grid = penalty_grid)
+
+lasso_best_param_log <-
+  lasso_tune_log %>%
+  select_best(metric = "rmse")
+
+lasso_final_wf_log <-
+  lasso_wf_log %>%
+  finalize_workflow(lasso_best_param_log)
+
+# Multi-Layer Perceptron with `keras`. 
+# 
+#mlp_spec_log <- 
+  #mlp(epochs = 80, 
+      #hidden_units = 20, 
+      #dropout = .05) %>% 
+  #set_mode("regression") %>% 
+  #set_engine("keras", verbose = 1)
+
+#mlp_wf_log <-
+  #workflow() %>% 
+  #add_recipe(recipe_log) %>% 
+  #add_model(mlp_spec_log)
+
+# Multi-Layer Perceptron with `nnet`, for compatibility
+mlp.nnet_spec_log <- 
+  mlp(epochs = 80, 
+      hidden_units = 20, 
+      dropout = .05) %>% 
+  set_mode("regression") %>% 
+  set_engine("nnet",MaxNWts = 5000)
+
+mlp.nnet_wf_log <-
+  workflow() %>% 
+  add_recipe(recipe_log) %>% 
+  add_model(mlp.nnet_spec_log)
+
+
+```
+
+Configuring the models to finalise workflows is a fairly straightforward process, albeit running the cross-validation process is time-consuming. 
+
+### Fitting
+
+Fitting the model for ranger and LASSO is a fairly standard process. 
+
+```{r class.output="scroll-100", echo=T, fig.align="center", fig.height=6, message=F, warning=F, eval=F}
+set.seed(8675309)
+ranger_fit_log <- ranger_wf_log %>% 
+  fit(flight_training_log)
+
+set.seed(8675309)
+lasso_fit_log <- 
+  lasso_final_wf_log %>% 
+  fit(flight_training_log)
+```
+
+We can preview the RMSE of these two models as below:
+
+```{r class.output="scroll-100", echo=T, fig.align="center", fig.height=6, message=F, warning=F, eval=T}
+rmse_ranger <- flight_training_log %>% 
+  select(log_delay) %>% 
+  bind_cols(predict(ranger_fit_log, new_data = flight_training_log)) %>% 
+  summarise(training_ranger_log_rmse = sqrt(mean((log_delay - .pred) ^ 2)))
+
+rmse_lasso <- flight_training_log %>% 
+  select(log_delay) %>% 
+  bind_cols(predict(lasso_fit_log, new_data = flight_training_log)) %>% 
+  summarise(training_lasso_log_rmse = sqrt(mean((log_delay - .pred) ^ 2)))
+
+rmse_set %<>% cbind(rmse_ranger) %>% cbind(rmse_lasso)
+rmse_set
+```
+
+Similarly, we train and assess RMSE for the MLP algorithm below:
+
+```{r class.output="scroll-100", echo=T, fig.align="center", fig.height=6, message=F, warning=F, eval=F}
+set.seed(8675309)
+mlp.nnet_fit_log <- 
+  mlp.nnet_wf_log %>% 
+  fit(flight_training_log)
+```
+
+```{r class.output="scroll-100", echo=T, fig.align="center", fig.height=6, message=F, warning=F, eval=T}
+rmse_mlp.nnet <- flight_training_log %>% 
+  select(log_delay) %>% 
+  bind_cols(predict(mlp.nnet_fit_log, new_data = flight_training_log)) %>% 
+  summarise(training_mlp.nnet_log_rmse = sqrt(mean((log_delay - .pred) ^ 2)))
+
+rmse_set %<>% cbind(rmse_mlp.nnet)
+rmse_set
+```
+
+While ideally I would have liked to implement a GPU-accelerated `keras'-based solution, the amount of compatibility issues raised during experimentation meant that such a solution has been cut out of this project.
+
+For archival and performance optimisation purposes, I have chosen to save the trained model objects for use in future expansions to this project. This also has a positive corollary in speeding up the rendering speed of knitting this .Rmd document.
+
+```{r class.output="scroll-100", echo=T, fig.align="center", fig.height=6, message=F, warning=F, eval=F}
+save(ranger_fit_log,file = "trained_workflows/MSP/ranger_fit_log.RData")
+save(lasso_fit_log,file = "trained_workflows/MSP/lasso_fit_log.RData")
+save(mlp.nnet_fit_log,file = "trained_workflows/MSP/mlp.nnet_fit_log.RData")
+```
+
+## Model Assessment
+
+In this section, we assess model performance using a two-step process. In part one, we break the model down to its constituent parts first using training data to observe training residuals and variable importance using RMSE-loss permutation. In part two, we validate the model on testing data to derive final performance metrics. To use an analogy, the first part is analogous to popping the bonnet of a car to examine its engine and components, while part two is road-testing the car on a track to ascertain its performance levels.
+
+### Under the bonnet: model explainer on training data
+
+As a single metric, we can call the `rmse_set` object created above to view the RMSE of each model when configured to predict on their own training data. These RMSE values can only be informational and cannot factor into final assessment of models, as they are not properly adjusted for overfitting/overtraining (recall that due to time constraints, k-fold cross validation was only performed on the LASSO regression model). 
+
+All models have better RMSE than the naive approach of predicting the average for all values, which is a good sign. There is a casual relationship between computational complexity and model accuracy here, as the most advanced model (MLP) is the most performant, but none of the models ended up faring worse than not training at all.
+
+```{r class.output="scroll-100", echo=T, fig.align="center", fig.height=6, message=F, warning=F, eval=T}
+rmse_set %>% 
+  kbl() %>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+To further assess the models, explainer objects are created here.
+
+```{r class.output="scroll-100", echo=T, fig.align="center", fig.height=6, message=F, warning=F, eval=T}
+# Creating `tidymodels` explainer object for LASSO
+lasso_explain <- 
+  explain_tidymodels(
+    model = lasso_fit_log,
+    data = flight_training_log %>% select(-log_delay), 
+    y = flight_training_log %>% pull(log_delay),
+    label = "lasso"
+  )
+
+# Creating `tidymodels` explainer object for random forest
+rf_explain <- 
+  explain_tidymodels(
+    model = ranger_fit_log,
+    data = flight_training_log %>% select(-log_delay), 
+    y = flight_training_log %>% pull(log_delay),
+    label = "rf"
+  )
+
+# Creating `tidymodels` explainer object for multilayer perceptron
+mlp_explain <- 
+  explain_tidymodels(
+    model = mlp.nnet_fit_log,
+    data = flight_training_log %>% select(-log_delay), 
+    y = flight_training_log %>% pull(log_delay),
+    label = "mlp"
+  )
+```
+
+With these explainer objects, we can create performance plots below, depicting the distribution of residuals for each model. From the histogram, we can see that all models are overestimating delay time much more than they are underestimating - which, based on real-world implications, is much more desirable than the other way around: after all, arriving at the gate early due to an overestimated delay time is much better than being late due to underestimation. The thin and long tail is consistent with the data structure. 
+
+Note that the residual here is essentially unit-free, as the dependent variable had been subjected to a logarithmic transformation. While this does make the model more abstract and less directly intuitive, log-transforming the DV helps overcoming the outsized effect of extreme-long-tail events on the residual calculation. 
+
+```{r class.output="scroll-100", echo=T, fig.align="center", fig.height=6, message=F, warning=F, eval=T}
+lasso_mod_perf <- model_performance(lasso_explain)
+rf_mod_perf <-  model_performance(rf_explain)
+mlp_mod_perf <-  model_performance(mlp_explain)
+
+hist_plot <- 
+  plot(lasso_mod_perf,
+       rf_mod_perf,
+       mlp_mod_perf,
+       geom = "histogram")
+
+box_plot <-
+  plot(lasso_mod_perf,
+       rf_mod_perf, 
+       mlp_mod_perf,
+       geom = "boxplot")
+
+library(patchwork)
+hist_plot + box_plot
+```
+
+Recall that in the first part, from the exploratory analysis plots, we had surmised that some of the temporal variables carry greater covariance with the DV: for example, there is an observable relationship between the month a flight takes place, or the hour of the day, and the departure delay. This is statistically confirmed by the `model_parts` functionality of `DALEXtra`: in the plot below, we can see that time and month are consistently the most important variables, whilst the date (effectively only used to test whether a date is a public holiday) and destination does not matter as much. 
+
+```{r class.output="scroll-100", echo=T, fig.align="center", fig.height=6, message=F, warning=F, eval=T}
+set.seed(8675309)
+lasso_var_imp <- 
+  model_parts(
+    lasso_explain
+    )
+set.seed(8675309)
+rf_var_imp <- 
+  model_parts(
+    rf_explain
+    )
+
+set.seed(8675309)
+mlp_var_imp <- 
+  model_parts(
+    mlp_explain
+    )
+
+plot(lasso_var_imp, show_boxplots = TRUE)  / plot(rf_var_imp, show_boxplots = TRUE) / plot(mlp_var_imp, show_boxplots = TRUE)
+
+```
+
+### Track test: model explainer on testing data
+
+A final assessment for the models is created here on pre-allocated testing data. We perform this as a final step in order to ensure the integrity of the validation process.
+
+```{r class.output="scroll-100", echo=T, fig.align="center", fig.height=6, message=F, warning=F, eval=T}
+rmse_ranger_validation <- flight_testing_log %>% 
+  select(log_delay) %>% 
+  bind_cols(predict(ranger_fit_log, new_data = flight_testing_log)) %>% 
+  summarise(testing_ranger_log_rmse = sqrt(mean((log_delay - .pred) ^ 2)))
+
+rmse_lasso_validation <- flight_testing_log %>% 
+  select(log_delay) %>% 
+  bind_cols(predict(lasso_fit_log, new_data = flight_testing_log)) %>% 
+  summarise(testing_lasso_log_rmse = sqrt(mean((log_delay - .pred) ^ 2)))
+
+rmse_mlp.nnet_validation <- flight_testing_log %>% 
+  select(log_delay) %>% 
+  bind_cols(predict(mlp.nnet_fit_log, new_data = flight_testing_log)) %>% 
+  summarise(testing_mlp.nnet_log_rmse = sqrt(mean((log_delay - .pred) ^ 2)))
+
+rmse_set %<>% 
+  cbind(rmse_ranger_validation) %>% 
+  cbind(rmse_lasso_validation) %>% 
+  cbind(rmse_mlp.nnet_validation)
+```
+
+```{r class.output="scroll-100", echo=T, fig.align="center", fig.height=6, message=F, warning=F, eval=T}
+rmse_set %>% 
+  pivot_longer(cols = everything(),
+               names_to = "RMSE type",
+               values_to = "Value") %>% 
+  kbl() %>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+With testing RMSE slightly higher than training RMSE and lower than the naive baseline, the models appear to have fairly adequate fit, and can be used to predict on new data if so desired. 
+
+# Future Exploration Potentials
+
+------------------------------------------------------------------------
+
+While the basic models constructed in this project are adequate for its scope, there are many potential avenues for further exploration.
+
+### Shiny Application Optimisation & Production Implementation
+
+The included Shiny app for the Exploratory Analysis section of this project, while functional, has a litany of limitations: 
+
+* Slow data fetching performance and lack of transparency in loading progress that can cause user frustration
+* Dependency on `lubridate` and `tidyverse` related syntax that creates a bottleneck in proper integration of SQL server capabilities
+* Several plots are not interactive due to `ggplotly` implementation incompatibilities
+* Draconian UX, with few explanations and markers for consumer QoL
+
+To address these concerns, there are several future avenues for development:
+
+* Elimination of unnecessary R syntactic expressions or integration with faster languages (C++ through Rcpp, etc.).
+* Elimination of `lubridate` and `tidyverse` specific dependencies that cannot be offloaded to server.
+* Redesigning of plots and graphs to ensure design consistency and compatibility with interactive graphing platforms.
+* Designing a production-level UI to replace current prototype-level experience.
+* Implementation of transparent, easily accessible progress tracking (loading bars, etc.) to decrease user frustration.
+* Implementation of security and other quality control measures (edge case testing, input sanitisation to prevent SQL injection attacks, etc.)
+
+### Machine Learning Models
+
+The models built over the course of this project have been limited both in terms of scope and technological/hardware capabilities. Limitations include:
+
+* Lack of multi-stage cross-validation, regularisation, manual tuning and optimisation during model construction.
+* Insufficient advanced feature engineering and preliminary analysis techniques.
+* GPU acceleration on `keras` and `tensorflow` implementation incompatibilities
+  + The installation and configuration process on R for `keras` and `tensorflow` has significantly more complexity in terms of dependency tracking and compatibility checks. 
+  + Python-to-R package `reticulate` can exhibit unexpected and hard-to-resolve behaviours at multiple points during installation, initialisation, configuration, training, saving, loading, and validating. 
+* `tidymodels` limitations
+  + Limited model selection.
+  + Idiosyncratic syntactic structure is incompatible with external libraries (`tidymodels/workflow` objects do not store `keras` model specifications properly after saving and loading, `tidymodels/stacks` taking `workflow_set` but not `workflow` object within `add_candidate()` for example).
+* and more.
+
+Avenues for future development:
+
+* Additional and reciprocal tuning of model parameters and hyperparameters.
+* Additional feature engineering and statistical analysis techniques (PCA being one that was cut for time)
+* Proper configuration and troubleshooting of `tidymodels`-to-`keras`-to-`tensorflow`-to-CUDA pipeline for hardware acceleration.
+* Implementation of deep learning techniques, based either on aforementioned `keras`/`tensorflow` approach or `H2O`-based solutions (custom `keras` feed-forward neural network being one that was cut for time and due to incompatibility with local `conda` build).
+* Implementation of model into production through Shiny or external application.

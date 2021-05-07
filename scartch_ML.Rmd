@@ -339,6 +339,12 @@ flight_training1 %>%
 ```
 
 ```{r}
+load("trained_workflows/ranger_fit1.RData")
+load("trained_workflows/lasso_fit1.RData")
+load("trained_workflows/mlp_fit1.RData")
+```
+
+```{r}
 lasso_explain <- 
   explain_tidymodels(
     model = lasso_fit1,
@@ -355,16 +361,27 @@ rf_explain <-
     label = "rf"
   )
 
+mlp_explain <- 
+  explain_tidymodels(
+    model = mlp_fit1,
+    data = flight_training1 %>% select(-dep_delay), 
+    y = flight_training1 %>% pull(dep_delay),
+    label = "mlp"
+  )
+
 lasso_mod_perf <- model_performance(lasso_explain)
 rf_mod_perf <-  model_performance(rf_explain)
+mlp_mod_perf <-  model_performance(mlp_explain)
 
 hist_plot <- 
   plot(lasso_mod_perf,
-       rf_mod_perf, 
+       rf_mod_perf,
+       #mlp_mod_perf,
        geom = "histogram")
 box_plot <-
   plot(lasso_mod_perf,
        rf_mod_perf, 
+       #mlp_mod_perf,
        geom = "boxplot")
 
 hist_plot + box_plot
@@ -380,7 +397,13 @@ rf_var_imp <-
     rf_explain
     )
 
-plot(lasso_var_imp, show_boxplots = TRUE) / plot(rf_var_imp, show_boxplots = TRUE)
+set.seed(8675309)
+mlp_var_imp <- 
+  model_parts(
+    mlp_explain
+    )
+
+plot(lasso_var_imp, show_boxplots = TRUE)  / plot(rf_var_imp, show_boxplots = TRUE) #/ plot(mlp_var_imp, show_boxplots = TRUE)
 
 ```
 
