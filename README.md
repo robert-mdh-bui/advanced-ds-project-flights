@@ -1,3 +1,3 @@
 # advanced-ds-project-flights
 
-Sample text
+VIEWABLE REPORT HERE: [link to report](https://robert-bui-advanced-ds-flights-proj.netlify.app)
